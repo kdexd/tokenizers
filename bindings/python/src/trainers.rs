@@ -45,6 +45,12 @@ impl BpeTrainer {
                         builder = builder.continuing_subword_prefix(val.extract()?)
                     }
                     "end_of_word_suffix" => builder = builder.end_of_word_suffix(val.extract()?),
+                    "split_by_unicode_script" => builder = builder.split_by_unicode_script(val.extract()?),
+                    "whitespace_character" => {
+                        let character_str: String = val.extract()?;
+                        let character: Vec<char> = character_str.chars().collect();
+                        builder = builder.whitespace_character(character[0]);
+                    },
                     _ => println!("Ignored unknown kwargs option {}", key),
                 };
             }

@@ -35,7 +35,8 @@ class ByteLevelBPETokenizer(BaseTokenizer):
               vocab_size: int=30000,
               min_frequency: int=2,
               show_progress: bool=True,
-              special_tokens: List[str]=[]):
+              special_tokens: List[str]=[],
+              split_by_unicode_script: bool=False):
         """ Train the model using the given files """
 
         trainer = trainers.BpeTrainer.new(
@@ -43,7 +44,9 @@ class ByteLevelBPETokenizer(BaseTokenizer):
             min_frequency=min_frequency,
             show_progress=show_progress,
             special_tokens=special_tokens,
-            initial_alphabet=pre_tokenizers.ByteLevel.alphabet()
+            initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
+            split_by_unicode_script=split_by_unicode_script,
+            whitespace_character="Ġ",
         )
         if isinstance(files, str):
             files = [files]

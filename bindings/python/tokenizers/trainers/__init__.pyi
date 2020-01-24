@@ -21,7 +21,9 @@ class BpeTrainer:
             limit_alphabet: Optional[int]=None,
             initial_alphabet: List[str]=[],
             continuing_subword_prefix: Optional[str]=None,
-            end_of_word_suffix: Optional[str]=None) -> Trainer:
+            end_of_word_suffix: Optional[str]=None,
+            split_by_unicode_script: bool=False,
+            whitespace_character: str="▁") -> Trainer:
         """ Instantiate a new BpeTrainer with the given options:
 
         Args:
@@ -51,6 +53,16 @@ class BpeTrainer:
 
             end_of_word_suffix: Optional[str]:
                 A suffix to be used for every subword that is a end-of-word.
+
+            split_by_unicode_script: bool
+                Whether to prevent subword merge having different unicode scripts.
+                This prevents tokens of mixed language and words+punctuations.
+                Default `False`.
+
+            whitespace_character: str
+                Character used for whitespace. This is used to add an exception for
+                `split_by_unicode_script` and allow whitespace characters in subwords.
+                '▁' for SentencePieceBPETokenizer and 'Ġ' for ByteLevelBPETokenizer.
 
         Returns:
             Trainer

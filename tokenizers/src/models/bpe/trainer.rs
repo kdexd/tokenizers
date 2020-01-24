@@ -2,6 +2,7 @@
 
 use super::{Pair, WithFirstLastIterator, Word, BPE};
 use crate::tokenizer::{Model, Result, Trainer};
+use crate::unicode::get_unicode_script;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::collections::{HashMap, HashSet};
 
@@ -14,6 +15,8 @@ struct Config {
     initial_alphabet: HashSet<char>,
     continuing_subword_prefix: Option<String>,
     end_of_word_suffix: Option<String>,
+    split_by_unicode_script: bool,
+    whitespace_character: char,
 }
 
 /// A `BpeTrainerBuilder` can be used to create a `BpeTrainer` with a custom
@@ -34,6 +37,8 @@ impl Default for BpeTrainerBuilder {
                 initial_alphabet: HashSet::new(),
                 continuing_subword_prefix: None,
                 end_of_word_suffix: None,
+                split_by_unicode_script: false,
+                whitespace_character: '▁',
             },
         }
     }
@@ -93,6 +98,18 @@ impl BpeTrainerBuilder {
         self
     }
 
+    /// Set the split_by_unicode_script
+    pub fn split_by_unicode_script(mut self, split: bool) -> Self {
+        self.config.split_by_unicode_script = split;
+        self
+    }
+
+    /// Set the whitespace character
+    pub fn whitespace_character(mut self, whitespace: char) -> Self {
+        self.config.whitespace_character = whitespace;
+        self
+    }
+
     /// Constructs the final BpeTrainer
     pub fn build(self) -> BpeTrainer {
         BpeTrainer {
@@ -104,6 +121,8 @@ impl BpeTrainerBuilder {
             initial_alphabet: self.config.initial_alphabet,
             continuing_subword_prefix: self.config.continuing_subword_prefix,
             end_of_word_suffix: self.config.end_of_word_suffix,
+            split_by_unicode_script: self.config.split_by_unicode_script,
+            whitespace_character: self.config.whitespace_character,
         }
     }
 }
@@ -142,6 +161,13 @@ pub struct BpeTrainer {
     continuing_subword_prefix: Option<String>,
     /// An optional suffix to caracterize and end-of-word subword
     end_of_word_suffix: Option<String>,
+    /// Whether to split subwords by unicode scripts. This prevents merging of two
+    /// subwords of languages with different scripts (ex. English-Chinese) or
+    /// punctuations ("dog" + "!" cannot merge).
+    split_by_unicode_script: bool,
+    /// Whitespace character. When `split_by_unicode_script` is true, this character
+    /// allows merges between whitespace and other characters.
+    whitespace_character: char,
 }
 
 impl Default for BpeTrainer {
@@ -413,41 +439,70 @@ impl BpeTrainer {
             }
             let new_token = format!("{}{}", part_a, part_b);
 
-            // Insert new token
-            let new_token_id = id_to_word.len() as u32;
-            id_to_word.push(new_token.clone());
-            word_to_id.insert(new_token.clone(), new_token_id);
-            merges.push((best_pair, new_token_id));
+            let mut is_valid_token = true;
+            if self.split_by_unicode_script {
+                // Check if all characters in new token belong to same unicode script
+                // (except whitespace). This prevents redundant tokens with same sub-
+                // word and different punctuations, or tokens with different languages.
 
-            // Reset count for the current best pair
-            pair_counts.get_mut(&best_pair).unwrap().0 = 0;
-
-            // We have to clone below, because the change_count closure keeps a mutable borrow
-            let where_to = where_to_update.get(&best_pair).unwrap().clone();
-
-            let mut change_count = |pair: Pair, count: i32, word_index: usize| {
-                if pair_counts.contains_key(&pair) {
-                    pair_counts.get_mut(&pair).unwrap().0 += count;
-                } else if count > 0 {
-                    pair_counts.insert(pair, (count, pair));
-                    if !where_to_update.contains_key(&pair) {
-                        where_to_update.insert(pair, HashSet::new());
+                // Keep unicode scripts of recent two characters (except whitespace).
+                // They should always be same for the whole token to have same script.
+                let mut unicode_scripts = Vec::new();
+                for c in new_token.chars() {
+                    if c != self.whitespace_character {
+                        unicode_scripts.push(get_unicode_script(c));
+                        if unicode_scripts.len() == 2 {
+                            if unicode_scripts[0] != unicode_scripts[1] {
+                                is_valid_token = false;
+                                break;
+                            }
+                            unicode_scripts.remove(0);
+                        }
                     }
                 }
+            }
 
-                if count > 0 {
-                    where_to_update.get_mut(&pair).unwrap().insert(word_index);
+            if is_valid_token {
+                let new_token_id = id_to_word.len() as u32;
+                id_to_word.push(new_token.clone());
+                word_to_id.insert(new_token.clone(), new_token_id);
+                merges.push((best_pair, new_token_id));
+
+                // Reset count for the current best pair.
+                pair_counts.get_mut(&best_pair).unwrap().0 = 0;
+
+                // We have to clone below, because the change_count closure keeps a mutable borrow
+                let where_to = where_to_update.get(&best_pair).unwrap().clone();
+
+                let mut change_count = |pair: Pair, count: i32, word_index: usize| {
+                    if pair_counts.contains_key(&pair) {
+                        pair_counts.get_mut(&pair).unwrap().0 += count;
+                    } else if count > 0 {
+                        pair_counts.insert(pair, (count, pair));
+                        if !where_to_update.contains_key(&pair) {
+                            where_to_update.insert(pair, HashSet::new());
+                        }
+                    }
+
+                    if count > 0 {
+                        where_to_update.get_mut(&pair).unwrap().insert(word_index);
+                    }
+                };
+
+                // Change all other counts
+                for word_index in where_to {
+                    let cur_word = &mut words[word_index];
+                    let changes = cur_word.merge(best_pair.0, best_pair.1, new_token_id);
+
+                    for change in changes {
+                        change_count(change.0, change.1 * counts[word_index], word_index);
+                    }
                 }
-            };
-
-            // Change all other counts
-            for word_index in where_to {
-                let cur_word = &mut words[word_index];
-                let changes = cur_word.merge(best_pair.0, best_pair.1, new_token_id);
-
-                for change in changes {
-                    change_count(change.0, change.1 * counts[word_index], word_index);
-                }
+            } else {
+                // Remove the pair from pair counts and where to update so it doesn't get
+                // selected as best pair ever again. Keep everything else unchanged.
+                pair_counts.remove(&best_pair);
+                where_to_update.remove(&best_pair);
             }
 
             if let Some(p) = &progress {

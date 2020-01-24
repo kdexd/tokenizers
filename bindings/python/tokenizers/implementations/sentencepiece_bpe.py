@@ -48,7 +48,8 @@ class SentencePieceBPETokenizer(BaseTokenizer):
               special_tokens: List[str]=["<unk>"],
               limit_alphabet: int=1000,
               initial_alphabet: List[str]=[],
-              show_progress: bool=True):
+              show_progress: bool=True,
+              split_by_unicode_script: bool=False):
         """ Train the model using the given files """
 
         trainer = trainers.BpeTrainer.new(
@@ -57,7 +58,9 @@ class SentencePieceBPETokenizer(BaseTokenizer):
             special_tokens=special_tokens,
             limit_alphabet=limit_alphabet,
             initial_alphabet=initial_alphabet,
-            show_progress=show_progress
+            show_progress=show_progress,
+            split_by_unicode_script=split_by_unicode_script,
+            whitespace_character="▁",
         )
         if isinstance(files, str):
             files = [files]

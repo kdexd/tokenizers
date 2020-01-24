@@ -54,3 +54,4 @@ pub mod pre_tokenizers;
 pub mod processors;
 pub mod tokenizer;
 pub mod utils;
+pub mod unicode;
